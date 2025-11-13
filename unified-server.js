@@ -172,6 +172,9 @@ class BrowserManager {
     this.page = null;
     this.currentAuthIndex = 0;
     this.scriptFileName = "black-browser.js";
+    this.cachedScript = null; // Cache script content for faster loading
+    this.contextCache = new Map(); // Cache contexts for instant switching
+    
     // [优化] 为低内存的Docker/云环境设置优化的启动参数
     this.launchArgs = [
       "--disable-dev-shm-usage", // 关键！防止 /dev/shm 空间不足导致浏览器崩溃
@@ -187,6 +190,22 @@ class BrowserManager {
       "--metrics-recording-only",
       "--mute-audio",
       "--safebrowsing-disable-auto-update",
+      // [新增] 更激进的内存和性能优化
+      "--disable-features=IsolateOrigins,site-per-process",
+      "--disable-site-isolation-trials",
+      "--disable-features=VizDisplayCompositor",
+      "--disable-ipc-flooding-protection",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows",
+      "--disable-client-side-phishing-detection",
+      "--disable-hang-monitor",
+      "--disable-popup-blocking",
+      "--disable-prompt-on-repost",
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-breakpad",
+      "--no-pings",
+      "--memory-pressure-off",
     ];
 
     if (this.config.browserExecutablePath) {
@@ -205,7 +224,36 @@ class BrowserManager {
     }
   }
 
-  async launchOrSwitchContext(authIndex) {
+  getScriptContent() {
+    if (!this.cachedScript) {
+      this.cachedScript = fs.readFileSync(
+        path.join(__dirname, this.scriptFileName),
+        "utf-8"
+      );
+      this.logger.info("[Browser] 脚本内容已缓存 (" + Math.round(this.cachedScript.length / 1024) + "KB)");
+    }
+    return this.cachedScript;
+  }
+
+  async launchOrSwitchContext(authIndex, forceRecreate = false) {
+    // [优化] 检查是否可以重用已缓存的上下文
+    if (!forceRecreate && this.contextCache.has(authIndex)) {
+      this.logger.info(`[Browser] ♻️  重用缓存的上下文 #${authIndex} (即时切换!)`);
+      const cached = this.contextCache.get(authIndex);
+      this.context = cached.context;
+      this.page = cached.page;
+      this.currentAuthIndex = authIndex;
+      // 验证页面仍然可用
+      try {
+        await this.page.evaluate(() => true);
+        this.logger.info(`[Browser] ✅ 缓存上下文验证通过，切换完成！`);
+        return;
+      } catch (error) {
+        this.logger.warn(`[Browser] ⚠️ 缓存上下文已失效，将重新创建...`);
+        this.contextCache.delete(authIndex);
+      }
+    }
+    
     if (!this.browser) {
       this.logger.info("🚀 [Browser] 浏览器实例未运行，正在进行首次启动...");
       if (!fs.existsSync(this.browserExecutablePath)) {

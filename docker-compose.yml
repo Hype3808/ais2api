@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  ais2api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Build arguments for optimization
+      args:
+        - NODE_ENV=production
+      # Use BuildKit for better caching and smaller images
+      cache_from:
+        - ais2api:latest
+    
+    image: ais2api:latest
+    container_name: ais2api
+    restart: unless-stopped
+    
+    ports:
+      - "7860:7860"  # HTTP API server
+      # Internal WebSocket (usually no need to expose externally)
+      # - "9998:9998"
+    
+    environment:
+      # Server Configuration
+      - HOST=0.0.0.0
+      - PORT=7860
+      
+      # Streaming Mode: 'real' or 'fake'
+      - STREAMING_MODE=real
+      
+      # Account Switching Configuration
+      - FAILURE_THRESHOLD=3
+      - SWITCH_ON_USES=40
+      - MAX_RETRIES=1
+      - RETRY_DELAY=2000
+      - INITIAL_AUTH_INDEX=1
+      
+      # Immediate switch status codes (comma-separated)
+      - IMMEDIATE_SWITCH_STATUS_CODES=429,503
+      
+      # API Keys (comma-separated, leave empty to use default: 123456)
+      - API_KEYS=${API_KEYS:-your-api-key-1,your-api-key-2}
+      
+      # Performance Optimization
+      - NODE_OPTIONS=--max-old-space-size=1024
+      
+      # Browser Configuration
+      # - CAMOUFOX_EXECUTABLE_PATH=/path/to/browser
+      
+      # Auth via Environment Variables (optional, alternative to auth files)
+      # - AUTH_JSON_1={"cookies":[...],"origins":[...]}
+      # - AUTH_JSON_2={"cookies":[...],"origins":[...]}
+    
+    volumes:
+      # Mount auth directory for file-based authentication
+      - ./auth:/app/auth:ro
+      
+      # Optional: Mount models.json if you want to customize
+      # - ./models.json:/app/models.json:ro
+      
+      # Optional: Mount config.json for advanced configuration
+      # - ./config.json:/app/config.json:ro
+    
+    # Optimized resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1.5G  # Reduced from 2G with optimizations
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Reduced shared memory with optimizations
+    shm_size: '1gb'
+    
+    # Security options
+    security_opt:
+      - seccomp:unconfined
+    
+    # Optimized health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:7860/api/status', (r) => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    
+    networks:
+      - ais2api-network
+    
+    # Logging configuration to prevent log bloat
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  ais2api-network:
+    driver: bridge
